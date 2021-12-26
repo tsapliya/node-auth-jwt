@@ -1,72 +1,93 @@
-const jwt = require("../../modules/Auth/JWT");
-const Session = require("../../models/login/Session");
+const jwt = require("../../modules/Auth/JWT")
+const Session = require("../../models/login/Session")
+const User = require('../../models/login/user')
 
 module.exports = class Login {
 
-    users = [
-        {
-            id: 1,
-            name: 'john',
-            login: '123',
-            sessions: '[{"sessionId":1,"lastTimeUpdate":123,"token":"213","device":"qwe"}]',
-            password: '123'
-        }
-    ]
-
-    user = {}
+    user = {
+        id: undefined,
+        sessions: undefined
+    }
 
     constructor() {
     }
 
     onPostLogin() {
-        return (req, res) => {
+        return async (req, res) => {
             const {login, password, info} = req.body
-            this.user = this.users.find(i => i.login === login)
+            const response = await User.getUserByLogin(login, password)
 
-            if (!this.user || this.user.password !== password) {
+            if (!response?.dataValues) {
                 setTimeout(() => res.status(401).json({error: 'Неверный логин или пароль'}), 2000)
                 return
             }
 
-            const {refresh, access} = this.createSession(info)
+            const {user_id: id, sessions} = response.dataValues
+            this.user.id = id
+            this.user.sessions = sessions
+
+            const {refresh, access} = await this.createSession(info)
 
             res.status(200).json({access, refresh})
         }
     }
 
     onPostLogout() {
-        return (req, res) => {
+        return async (req, res) => {
             const authHeader = req.headers['authorization']
             const token = authHeader && authHeader.split(' ')[1]
 
             if (!token) {
-                return res.sendStatus(401)
+                res.sendStatus(401)
+                return
             }
 
-            const {userId, sessionId} = jwt.verify(token, res)
+            const decode = jwt.decode(token, res)
 
-            this.user = this.users.find(i => i.id === userId)
-            this.deleteSession(sessionId)
+            if (!decode) {
+                res.sendStatus(401)
+                return
+            }
+
+            const {userId, sessionId} = decode
+
+            console.log(userId, sessionId)
+
+            const response = await User.getUserSessionsById(userId)
+
+            const {user_id: id, sessions} = response.dataValues
+            this.user.id = id
+            this.user.sessions = sessions
+
+            this.deleteSession(this.user.id)
+            await User.updateUserSession(this.user.id, this.user.sessions)
 
             res.status(200).json()
         }
     }
 
-    createSession(device) {
+    async createSession(device) {
         let sessions = []
+        let newSessionId = 0
 
-        try {
-            sessions = JSON.parse(this.user.sessions)
-        } catch {
-            throw new Error()
+        if (this.user.sessions.length) {
+            try {
+                sessions = JSON.parse(this.user.sessions)
+            } catch {
+                throw new Error()
+            }
         }
 
-        const newSessionId = Math.max(...sessions.map(i => i.sessionId)) + 1 || 0
+        if (sessions.length) {
+            newSessionId = Math.max(...sessions.map(i => i.sessionId)) + 1
+        }
+
         const newTokens = jwt.createNewTokens(this.user.id, newSessionId)
         const session = new Session({sessionId: newSessionId, device, token: newTokens.refresh})
 
         sessions.push(session.getObject())
         this.user.sessions = JSON.stringify(sessions)
+        await User.updateUserSession(this.user.id, this.user.sessions)
         return newTokens
     }
 
@@ -80,5 +101,4 @@ module.exports = class Login {
         this.user.sessions = JSON.stringify(sessions.filter(i => i.sessionId !== sessionId))
 
     }
-
 }

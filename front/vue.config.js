@@ -6,7 +6,7 @@ const webpack = require('webpack')
  */
 module.exports = {
   devServer: {
-    host: `localhost`,
+   // host: `localhost`,
     port: 1117,
     https: true,
     proxy: {
